@@ -1,1 +1,5 @@
 /target
+
+# Guest kernel and root filesystem, built by scripts/build.sh.
+# Large binary artifacts; reproducible from source.
+/vm/

@@ -85,7 +85,14 @@ pub fn router(state: AppState) -> Router {
         .layer(cors)
         // No endpoint reads a body; reject anything that arrives with one.
         .layer(RequestBodyLimitLayer::new(0))
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        // Bounds how long a request may take to produce a response. This does
+        // not cap WebSocket lifetime: the /ws handler returns its 101 straight
+        // away and hyper drives the upgraded stream separately, outside this
+        // service future.
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(30),
+        ))
         .layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
