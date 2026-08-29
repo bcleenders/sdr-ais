@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIS Ship Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  body { margin: 0; }
+  #map { width: 100vw; height: 100vh; }
+  #stats {
+    position: absolute; top: 10px; right: 10px; z-index: 1000;
+    background: rgba(255,255,255,0.9); padding: 8px 14px;
+    border-radius: 6px; font: 13px/1.5 system-ui, sans-serif;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }
+  #stats b { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="stats">
+  Ships: <b id="ship-count">0</b> |
+  Messages: <b id="msg-count">0</b>
+</div>
+<script>
+const map = L.map('map').setView([52.38, 4.90], 13);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+const ships = new Map();
+let msgCount = 0;
+let hasFitted = false;
+
+const STALE_MS = 5 * 60 * 1000;
+
+function shipColor(status) {
+  if (!status) return '#2196F3';
+  if (status.includes('Moored')) return '#9E9E9E';
+  if (status.includes('Anchor')) return '#FF9800';
+  if (status.includes('Sailing')) return '#4CAF50';
+  return '#2196F3';
+}
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+  ws.onmessage = (event) => {
+    const d = JSON.parse(event.data);
+    msgCount++;
+    document.getElementById('msg-count').textContent = msgCount;
+
+    if (d.lat == null || d.lon == null) return;
+
+    const key = d.mmsi;
+    const now = Date.now();
+
+    if (ships.has(key)) {
+      const s = ships.get(key);
+      s.marker.setLatLng([d.lat, d.lon]);
+      s.marker.setStyle({ color: shipColor(d.nav_status), fillColor: shipColor(d.nav_status) });
+      s.lastSeen = now;
+      s.data = d;
+      s.marker.setTooltipContent(tooltip(d));
+    } else {
+      const marker = L.circleMarker([d.lat, d.lon], {
+        radius: 5, weight: 1, color: shipColor(d.nav_status),
+        fillColor: shipColor(d.nav_status), fillOpacity: 0.8
+      }).addTo(map);
+      marker.bindTooltip(tooltip(d));
+      ships.set(key, { marker, lastSeen: now, data: d });
+    }
+
+    document.getElementById('ship-count').textContent = ships.size;
+
+    if (!hasFitted && ships.size >= 10) {
+      hasFitted = true;
+      const bounds = L.latLngBounds([...ships.values()].map(s => s.marker.getLatLng()));
+      map.fitBounds(bounds.pad(0.1));
+    }
+  };
+
+  ws.onclose = () => setTimeout(connectWs, 2000);
+}
+
+function tooltip(d) {
+  let t = 'MMSI: ' + d.mmsi;
+  if (d.ship_name) t += '\n' + d.ship_name;
+  if (d.speed_kn != null) t += '\nSpeed: ' + d.speed_kn.toFixed(1) + ' kn';
+  if (d.course_deg != null) t += '\nCourse: ' + d.course_deg.toFixed(0) + '°';
+  if (d.nav_status) t += '\n' + d.nav_status;
+  return t;
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - STALE_MS;
+  for (const [key, s] of ships) {
+    if (s.lastSeen < cutoff) {
+      s.marker.remove();
+      ships.delete(key);
+    }
+  }
+  document.getElementById('ship-count').textContent = ships.size;
+}, 30000);
+
+connectWs();
+</script>
+</body>
+</html>

@@ -1,11 +1,18 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::State;
+use axum::response::Html;
+use axum::routing::get;
+use axum::Router;
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use desperado::rtlsdr::DeviceSelector;
 use rs162::decode::ais::Message;
 use rs162::sources::AisIqSource;
 use serde::Serialize;
+use tokio::sync::broadcast;
 
 static COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -27,9 +34,13 @@ struct Args {
     /// Enable bias-tee power (for active antennas)
     #[arg(long)]
     bias_tee: bool,
+
+    /// Web UI port
+    #[arg(long, default_value_t = 3000)]
+    port: u16,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct PositionData {
     timestamp: String,
     channel: char,
@@ -186,7 +197,81 @@ fn format_human(p: &PositionData) -> String {
     )
 }
 
-fn main() {
+struct OutlierFilter {
+    lats: VecDeque<f64>,
+    lons: VecDeque<f64>,
+    median_lat: Option<f64>,
+    median_lon: Option<f64>,
+}
+
+impl OutlierFilter {
+    fn new() -> Self {
+        Self {
+            lats: VecDeque::new(),
+            lons: VecDeque::new(),
+            median_lat: None,
+            median_lon: None,
+        }
+    }
+
+    fn is_valid(&mut self, pos: &PositionData) -> bool {
+        let (lat, lon) = match (pos.lat, pos.lon) {
+            (Some(lat), Some(lon)) => (lat, lon),
+            _ => return false,
+        };
+
+        if let (Some(med_lat), Some(med_lon)) = (self.median_lat, self.median_lon) {
+            if (lat - med_lat).abs() > 0.5 || (lon - med_lon).abs() > 0.5 {
+                return false;
+            }
+        }
+
+        const WINDOW: usize = 200;
+        if self.lats.len() >= WINDOW {
+            self.lats.pop_front();
+            self.lons.pop_front();
+        }
+        self.lats.push_back(lat);
+        self.lons.push_back(lon);
+
+        if self.lats.len() >= 20 {
+            let mut sorted_lats: Vec<f64> = self.lats.iter().copied().collect();
+            let mut sorted_lons: Vec<f64> = self.lons.iter().copied().collect();
+            sorted_lats.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted_lons.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let mid = sorted_lats.len() / 2;
+            self.median_lat = Some(sorted_lats[mid]);
+            self.median_lon = Some(sorted_lons[mid]);
+        }
+
+        true
+    }
+}
+
+#[derive(Clone)]
+struct AppState {
+    tx: broadcast::Sender<String>,
+}
+
+async fn index_handler() -> Html<&'static str> {
+    Html(include_str!("index.html"))
+}
+
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> axum::response::Response {
+    ws.on_upgrade(|socket| handle_ws(socket, state))
+}
+
+async fn handle_ws(mut socket: WebSocket, state: AppState) {
+    let mut rx = state.tx.subscribe();
+    while let Ok(msg) = rx.recv().await {
+        if socket.send(WsMessage::Text(msg.into())).await.is_err() {
+            break;
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
     let args = Args::parse();
 
     ctrlc::set_handler(|| {
@@ -196,42 +281,76 @@ fn main() {
     })
     .expect("failed to set Ctrl+C handler");
 
-    eprintln!("Connecting to RTL-SDR device {}...", args.device);
-    let source = match AisIqSource::from_rtlsdr(
-        DeviceSelector::Index(args.device),
-        288_000,
-        args.gain,
-        args.bias_tee,
-    ) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to open RTL-SDR: {e}");
-            std::process::exit(1);
-        }
-    };
-    eprintln!("Listening for AIS on 161.975 / 162.025 MHz...");
+    let (tx, _) = broadcast::channel::<String>(256);
+    let tx_sdr = tx.clone();
 
-    for result in source {
-        match result {
-            Ok(demod) => {
-                if let Some(decoded) = demod.decode() {
-                    if let Some(pos) =
-                        extract_position(&decoded, demod.timestamp, demod.channel, demod.signal_level)
-                    {
-                        if args.json {
-                            if let Ok(json) = serde_json::to_string(&pos) {
-                                println!("{json}");
+    let json_output = args.json;
+    let device = args.device;
+    let gain = args.gain;
+    let bias_tee = args.bias_tee;
+
+    std::thread::spawn(move || {
+        eprintln!("Connecting to RTL-SDR device {device}...");
+        let source = match AisIqSource::from_rtlsdr(
+            DeviceSelector::Index(device),
+            288_000,
+            gain,
+            bias_tee,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to open RTL-SDR: {e}");
+                std::process::exit(1);
+            }
+        };
+        eprintln!("Listening for AIS on 161.975 / 162.025 MHz...");
+
+        let mut filter = OutlierFilter::new();
+
+        for result in source {
+            match result {
+                Ok(demod) => {
+                    if let Some(decoded) = demod.decode() {
+                        if let Some(pos) = extract_position(
+                            &decoded,
+                            demod.timestamp,
+                            demod.channel,
+                            demod.signal_level,
+                        ) {
+                            if json_output {
+                                if let Ok(json) = serde_json::to_string(&pos) {
+                                    println!("{json}");
+                                }
+                            } else {
+                                println!("{}", format_human(&pos));
                             }
-                        } else {
-                            println!("{}", format_human(&pos));
+                            COUNT.fetch_add(1, Ordering::Relaxed);
+
+                            if filter.is_valid(&pos) {
+                                if let Ok(json) = serde_json::to_string(&pos) {
+                                    let _ = tx_sdr.send(json);
+                                }
+                            }
                         }
-                        COUNT.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-            }
-            Err(e) => {
-                eprintln!("SDR error: {e}");
+                Err(e) => {
+                    eprintln!("SDR error: {e}");
+                }
             }
         }
-    }
+    });
+
+    let state = AppState { tx };
+    let app = Router::new()
+        .route("/", get(index_handler))
+        .route("/ws", get(ws_handler))
+        .with_state(state);
+
+    let port = args.port;
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .expect("failed to bind port");
+    eprintln!("Map UI: http://localhost:{port}");
+    axum::serve(listener, app).await.unwrap();
 }
