@@ -18,7 +18,7 @@ use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -36,17 +36,26 @@ pub struct AppState {
     tx: broadcast::Sender<String>,
     vessels: Arc<Mutex<VesselTable>>,
     ws_clients: Arc<AtomicUsize>,
-    allowed_origin: Arc<String>,
+    allowed_origins: Arc<Vec<String>>,
 }
 
 impl AppState {
-    pub fn new(allowed_origin: String) -> (Self, broadcast::Sender<String>) {
+    /// `allowed_origins` is a comma-separated list, as it arrives on the
+    /// kernel command line. Production carries only the frontend origin;
+    /// vm-up.sh can append a localhost origin for local development.
+    pub fn new(allowed_origins: String) -> (Self, broadcast::Sender<String>) {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let origins: Vec<String> = allowed_origins
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
         let state = Self {
             tx: tx.clone(),
             vessels: Arc::new(Mutex::new(VesselTable::new())),
             ws_clients: Arc::new(AtomicUsize::new(0)),
-            allowed_origin: Arc::new(allowed_origin),
+            allowed_origins: Arc::new(origins),
         };
         (state, tx)
     }
@@ -64,19 +73,20 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
-    let allowed = state.allowed_origin.clone();
+    let allowed = state.allowed_origins.clone();
 
     // Only the map frontend may read this from a browser. Note this is a
     // browser-side control, not authentication: it stops other origins from
     // embedding the feed, but any non-browser client can send whatever Origin
     // it likes. The data is public vessel positions, so that is acceptable.
-    let cors = match HeaderValue::from_str(allowed.as_str()) {
-        Ok(origin) => CorsLayer::new()
-            .allow_origin(origin)
-            .allow_methods([Method::GET])
-            .max_age(Duration::from_secs(600)),
-        Err(_) => CorsLayer::new().allow_methods([Method::GET]),
-    };
+    let origin_values: Vec<HeaderValue> = allowed
+        .iter()
+        .filter_map(|o| HeaderValue::from_str(o).ok())
+        .collect();
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origin_values))
+        .allow_methods([Method::GET])
+        .max_age(Duration::from_secs(600));
 
     Router::new()
         .route("/healthz", get(healthz))
@@ -134,7 +144,7 @@ async fn ws_handler(
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
 
     match origin {
-        Some(o) if o == state.allowed_origin.as_str() => {}
+        Some(o) if state.allowed_origins.iter().any(|a| a == o) => {}
         // Absent Origin means a non-browser client. Allowed: the feed is public
         // and this keeps `websocat`/curl debugging workable.
         None => {}

@@ -35,7 +35,7 @@ fn main() {
     // PID 1 has to bring up its own environment; there is no init system.
     boot::mount_proc();
 
-    let allowed_origin = boot::kernel_param("sdr.origin")
+    let allowed_origins = boot::kernel_param("sdr.origin")
         .unwrap_or_else(|| "https://amsterdam-vessel-map--bcleenders.replit.app".to_string());
     let iq_port = boot::kernel_param("sdr.iq_port")
         .and_then(|v| v.parse().ok())
@@ -55,12 +55,12 @@ fn main() {
         .expect("failed to build tokio runtime");
 
     runtime.block_on(async move {
-        let (state, _tx) = api::AppState::new(allowed_origin.clone());
+        let (state, _tx) = api::AppState::new(allowed_origins.clone());
 
         tokio::spawn(feed_iq_from_host(iq_port, pipe_tx));
         tokio::spawn(decode_loop(state.clone()));
 
-        eprintln!("guest: serving API on vsock port {http_port}, origin {allowed_origin}");
+        eprintln!("guest: serving API on vsock port {http_port}, origins {allowed_origins}");
 
         let listener = VsockAxumListener::bind(VMADDR_CID_ANY, http_port)
             .expect("failed to bind vsock listener");

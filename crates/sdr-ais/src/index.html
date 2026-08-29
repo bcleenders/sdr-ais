@@ -45,9 +45,14 @@ function shipColor(status) {
   return '#2196F3';
 }
 
+// The sandboxed API on alnitak. Only /ws is exposed publicly; it replays the
+// current vessel table on connect, so no separate snapshot fetch is needed.
+// Serving this page from anywhere other than the allowed origins will be
+// refused with a 403 at the upgrade — see README, "Running the map locally".
+const API_URL = 'wss://alnitak.tail36e7a.ts.net/ws';
+
 function connectWs() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws');
+  const ws = new WebSocket(API_URL);
 
   ws.onmessage = (event) => {
     const d = JSON.parse(event.data);

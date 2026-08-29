@@ -49,6 +49,23 @@ HOST_BIN="$REPO_ROOT/target/release/sdr-ais-host"
 # kernel command line, so changing it needs only a VM restart, not a rebuild.
 ALLOWED_ORIGIN="${SDR_AIS_ALLOWED_ORIGIN:-https://amsterdam-vessel-map--bcleenders.replit.app}"
 
+# Additional browser origins permitted to read the stream, comma-separated.
+# Empty in production. To run the bundled map locally against the live API:
+#
+#     SDR_AIS_EXTRA_ORIGINS=http://localhost:8000 ./scripts/vm-up.sh
+#     ./scripts/serve-ui.sh
+#
+# Widening this is low risk — the Origin check only stops *other websites*
+# reading the feed in a browser, any non-browser client can send whatever
+# Origin it likes, and the data is public vessel positions. It is opt-in so
+# that production does not quietly carry a development origin.
+EXTRA_ORIGINS="${SDR_AIS_EXTRA_ORIGINS:-}"
+ALLOWED_ORIGINS="$ALLOWED_ORIGIN${EXTRA_ORIGINS:+,$EXTRA_ORIGINS}"
+
+# Port serve-ui.sh listens on. Must match an entry in EXTRA_ORIGINS, or the
+# guest will refuse the upgrade with a 403.
+UI_PORT="${SDR_AIS_UI_PORT:-8000}"
+
 # Funnel can only listen on 443, 8443 or 10000.
 FUNNEL_PORT="${SDR_AIS_FUNNEL_PORT:-443}"
 

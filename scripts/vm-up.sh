@@ -77,7 +77,7 @@ cat > "$CONFIG_JSON" <<EOF
 {
   "boot-source": {
     "kernel_image_path": "$KERNEL",
-    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd init=/init sdr.origin=$ALLOWED_ORIGIN sdr.iq_port=$IQ_PORT sdr.http_port=$GUEST_HTTP_PORT"
+    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd init=/init sdr.origin=$ALLOWED_ORIGINS sdr.iq_port=$IQ_PORT sdr.http_port=$GUEST_HTTP_PORT"
   },
   "drives": [
     {
@@ -148,7 +148,7 @@ cat <<EOF
     /v1/vessels      current vessel table (JSON)
     /ws              live position stream (WebSocket)
 
-  allowed origin $ALLOWED_ORIGIN
+  allowed origins $ALLOWED_ORIGINS
   logs           $RUN_DIR/{firecracker,tap,proxy}.log
 
   expose publicly  ./scripts/funnel-up.sh
