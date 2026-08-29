@@ -1,68 +1,43 @@
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+//! Shared AIS decoding, filtering and vessel-state logic.
+//!
+//! This crate is deliberately free of I/O and hardware dependencies so that it
+//! can be compiled into the sandboxed guest (static musl, no USB, no network
+//! stack) as well as into the local development CLI.
 
-use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
-use axum::response::Html;
-use axum::routing::get;
-use axum::Router;
+use std::collections::{HashMap, VecDeque};
+
 use chrono::{DateTime, Utc};
-use clap::Parser;
-use desperado::rtlsdr::DeviceSelector;
 use rs162::decode::ais::Message;
-use rs162::sources::AisIqSource;
 use serde::Serialize;
-use tokio::sync::broadcast;
 
-static COUNT: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Parser)]
-#[command(name = "sdr-ais", about = "Log AIS ship positions from an RTL-SDR")]
-struct Args {
-    /// Output one JSON object per line instead of human-readable text
-    #[arg(long)]
-    json: bool,
-
-    /// RTL-SDR device index
-    #[arg(long, default_value_t = 0)]
-    device: usize,
-
-    /// Manual gain in dB (default: 49.6, max for AIS at 162 MHz)
-    #[arg(long)]
-    gain: Option<f64>,
-
-    /// Enable bias-tee power (for active antennas)
-    #[arg(long)]
-    bias_tee: bool,
-
-    /// Web UI port
-    #[arg(long, default_value_t = 3000)]
-    port: u16,
-}
+/// Sample rate the host captures at. 288 kHz is the only rate in the RTL-SDR's
+/// low window that divides exactly to the demodulator's 96 kHz, so the sample
+/// rate adapter does no upsampling.
+pub const AIS_SAMPLE_RATE: u32 = 288_000;
 
 #[derive(Clone, Serialize)]
-struct PositionData {
-    timestamp: String,
-    channel: char,
-    mmsi: u32,
+pub struct PositionData {
+    pub timestamp: String,
+    pub channel: char,
+    pub mmsi: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    lat: Option<f64>,
+    pub lat: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    lon: Option<f64>,
+    pub lon: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    speed_kn: Option<f32>,
+    pub speed_kn: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    course_deg: Option<f32>,
+    pub course_deg: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    heading: Option<u16>,
+    pub heading: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    nav_status: Option<String>,
+    pub nav_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    ship_name: Option<String>,
-    signal_level: f32,
+    pub ship_name: Option<String>,
+    pub signal_level: f32,
 }
 
-fn extract_position(
+pub fn extract_position(
     decoded: &Message,
     timestamp: f64,
     channel: char,
@@ -141,7 +116,6 @@ fn extract_position(
             course_deg: r.course,
             heading: None,
             nav_status: None,
-            ship_name: None,
             signal_level,
         }),
 
@@ -149,7 +123,7 @@ fn extract_position(
     }
 }
 
-fn format_human(p: &PositionData) -> String {
+pub fn format_human(p: &PositionData) -> String {
     let lat = p
         .lat
         .map(|v| {
@@ -176,10 +150,7 @@ fn format_human(p: &PositionData) -> String {
         .map(|c| format!("{c:5.1}\u{00b0}"))
         .unwrap_or_else(|| "   N/A".to_string());
 
-    let hdg = p
-        .heading
-        .map(|h| format!("hdg:{h:3}"))
-        .unwrap_or_default();
+    let hdg = p.heading.map(|h| format!("hdg:{h:3}")).unwrap_or_default();
 
     let status = p.nav_status.as_deref().unwrap_or("");
 
@@ -197,15 +168,24 @@ fn format_human(p: &PositionData) -> String {
     )
 }
 
-struct OutlierFilter {
+/// Rejects reports whose position is implausibly far from the running median of
+/// recently received positions. AIS is received off-air, so a corrupted frame
+/// that still passes CRC can carry a wild lat/lon.
+pub struct OutlierFilter {
     lats: VecDeque<f64>,
     lons: VecDeque<f64>,
     median_lat: Option<f64>,
     median_lon: Option<f64>,
 }
 
+impl Default for OutlierFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutlierFilter {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             lats: VecDeque::new(),
             lons: VecDeque::new(),
@@ -214,11 +194,15 @@ impl OutlierFilter {
         }
     }
 
-    fn is_valid(&mut self, pos: &PositionData) -> bool {
+    pub fn is_valid(&mut self, pos: &PositionData) -> bool {
         let (lat, lon) = match (pos.lat, pos.lon) {
             (Some(lat), Some(lon)) => (lat, lon),
             _ => return false,
         };
+
+        if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+            return false;
+        }
 
         if let (Some(med_lat), Some(med_lon)) = (self.median_lat, self.median_lon) {
             if (lat - med_lat).abs() > 0.5 || (lon - med_lon).abs() > 0.5 {
@@ -248,109 +232,58 @@ impl OutlierFilter {
     }
 }
 
-#[derive(Clone)]
-struct AppState {
-    tx: broadcast::Sender<String>,
+/// Most recent position per vessel, so a newly connected client can render
+/// immediately instead of waiting for each ship's next transmission.
+///
+/// Bounded: a hostile or malfunctioning transmitter cannot grow this without
+/// limit, since inserting past `MAX_VESSELS` evicts the least recently heard.
+pub struct VesselTable {
+    vessels: HashMap<u32, (PositionData, u64)>,
+    seq: u64,
 }
 
-async fn index_handler() -> Html<&'static str> {
-    Html(include_str!("index.html"))
-}
-
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> axum::response::Response {
-    ws.on_upgrade(|socket| handle_ws(socket, state))
-}
-
-async fn handle_ws(mut socket: WebSocket, state: AppState) {
-    let mut rx = state.tx.subscribe();
-    while let Ok(msg) = rx.recv().await {
-        if socket.send(WsMessage::Text(msg.into())).await.is_err() {
-            break;
-        }
+impl Default for VesselTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
+impl VesselTable {
+    /// Amsterdam sees a few hundred vessels; 4096 is generous headroom while
+    /// still bounding the snapshot response to a few hundred kilobytes.
+    pub const MAX_VESSELS: usize = 4096;
 
-    ctrlc::set_handler(|| {
-        let count = COUNT.load(Ordering::Relaxed);
-        eprintln!("\nReceived {count} position reports.");
-        std::process::exit(0);
-    })
-    .expect("failed to set Ctrl+C handler");
+    pub fn new() -> Self {
+        Self {
+            vessels: HashMap::new(),
+            seq: 0,
+        }
+    }
 
-    let (tx, _) = broadcast::channel::<String>(256);
-    let tx_sdr = tx.clone();
-
-    let json_output = args.json;
-    let device = args.device;
-    let gain = args.gain;
-    let bias_tee = args.bias_tee;
-
-    std::thread::spawn(move || {
-        eprintln!("Connecting to RTL-SDR device {device}...");
-        let source = match AisIqSource::from_rtlsdr(
-            DeviceSelector::Index(device),
-            288_000,
-            gain,
-            bias_tee,
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to open RTL-SDR: {e}");
-                std::process::exit(1);
-            }
-        };
-        eprintln!("Listening for AIS on 161.975 / 162.025 MHz...");
-
-        let mut filter = OutlierFilter::new();
-
-        for result in source {
-            match result {
-                Ok(demod) => {
-                    if let Some(decoded) = demod.decode() {
-                        if let Some(pos) = extract_position(
-                            &decoded,
-                            demod.timestamp,
-                            demod.channel,
-                            demod.signal_level,
-                        ) {
-                            if json_output {
-                                if let Ok(json) = serde_json::to_string(&pos) {
-                                    println!("{json}");
-                                }
-                            } else {
-                                println!("{}", format_human(&pos));
-                            }
-                            COUNT.fetch_add(1, Ordering::Relaxed);
-
-                            if filter.is_valid(&pos) {
-                                if let Ok(json) = serde_json::to_string(&pos) {
-                                    let _ = tx_sdr.send(json);
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("SDR error: {e}");
-                }
+    pub fn insert(&mut self, pos: PositionData) {
+        self.seq += 1;
+        if self.vessels.len() >= Self::MAX_VESSELS && !self.vessels.contains_key(&pos.mmsi) {
+            if let Some(&oldest) = self
+                .vessels
+                .iter()
+                .min_by_key(|(_, (_, seq))| *seq)
+                .map(|(mmsi, _)| mmsi)
+            {
+                self.vessels.remove(&oldest);
             }
         }
-    });
+        self.vessels.insert(pos.mmsi, (pos, self.seq));
+    }
 
-    let state = AppState { tx };
-    let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/ws", get(ws_handler))
-        .with_state(state);
+    pub fn snapshot(&self) -> Vec<PositionData> {
+        self.vessels.values().map(|(p, _)| p.clone()).collect()
+    }
 
-    let port = args.port;
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
-        .await
-        .expect("failed to bind port");
-    eprintln!("Map UI: http://localhost:{port}");
-    axum::serve(listener, app).await.unwrap();
+    pub fn len(&self) -> usize {
+        self.vessels.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.vessels.is_empty()
+    }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "sdr-ais-host"
+version.workspace = true
+edition.workspace = true
+
+# Runs on the host, outside the sandbox. Deliberately contains no parsers: the
+# tap copies raw USB bytes to a socket, the proxy copies TCP bytes to a socket.
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rs-rtl.workspace = true
+tokio.workspace = true

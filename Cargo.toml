@@ -1,16 +1,40 @@
-[package]
-name = "sdr-ais"
+[workspace]
+resolver = "3"
+members = [
+    "crates/ais-core",
+    "crates/sdr-ais",
+    "crates/sdr-ais-host",
+    "crates/sdr-ais-guest",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-rs162 = { version = "0.1.5", features = ["rtlsdr"] }
-desperado = "0.4.2"
-chrono = "0.4"
-ctrlc = "3"
+[workspace.dependencies]
+ais-core = { path = "crates/ais-core" }
+
+rs162 = { version = "0.1.5", default-features = false }
+desperado = { version = "0.4.2", default-features = false }
+rs-rtl = "0.4.2"
+
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-clap = { version = "4", features = ["derive"] }
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+axum = { version = "0.8", default-features = false, features = ["ws", "http1", "json", "tokio"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "timeout", "limit", "set-header"] }
+tokio-vsock = "0.7"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,22 @@
+[package]
+name = "sdr-ais-guest"
+version.workspace = true
+edition.workspace = true
+
+# Runs as PID 1 inside the Firecracker microVM. Must stay free of anything that
+# needs USB, a network stack, or a libc beyond static musl.
+
+[dependencies]
+ais-core.workspace = true
+rs162.workspace = true
+desperado.workspace = true
+
+axum.workspace = true
+futures.workspace = true
+libc = "0.2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-vsock.workspace = true
+tower.workspace = true
+tower-http.workspace = true

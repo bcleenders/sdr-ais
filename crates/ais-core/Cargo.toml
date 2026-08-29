@@ -1,0 +1,9 @@
+[package]
+name = "ais-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rs162.workspace = true
+chrono.workspace = true
+serde.workspace = true

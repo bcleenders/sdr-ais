@@ -1,0 +1,19 @@
+[package]
+name = "sdr-ais"
+version.workspace = true
+edition.workspace = true
+
+# Local development tool: talks to the dongle directly and serves the Leaflet
+# map. This is the unsandboxed, laptop-side workflow. The public deployment on
+# alnitak uses sdr-ais-host + sdr-ais-guest instead.
+
+[dependencies]
+ais-core.workspace = true
+rs162 = { workspace = true, features = ["rtlsdr"] }
+desperado = { workspace = true, features = ["rtlsdr"] }
+
+axum.workspace = true
+clap.workspace = true
+ctrlc = "3"
+serde_json.workspace = true
+tokio.workspace = true
