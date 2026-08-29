@@ -78,6 +78,19 @@ else
     echo "    skipped (could not determine invoking user)"
 fi
 
+echo "==> Granting Tailscale operator rights"
+# Without this the tailscale CLI refuses to change serve/funnel config
+# for a non-root user, so funnel-up.sh would need sudo every time.
+if command -v tailscale >/dev/null && [[ -n "$TARGET_USER" ]]; then
+    if tailscale set --operator="$TARGET_USER" 2>/dev/null; then
+        echo "    $TARGET_USER may now manage funnel without sudo"
+    else
+        echo "    could not set operator (is tailscaled running?)"
+    fi
+else
+    echo "    skipped (tailscale not installed)"
+fi
+
 echo "==> Keeping the user session alive across logouts"
 # vm-up.sh puts its sockets in /run/user/$UID, which systemd deletes when the
 # last session for that user ends. Lingering keeps the VM running after you
