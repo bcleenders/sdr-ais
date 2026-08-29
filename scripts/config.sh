@@ -69,3 +69,28 @@ pid_alive() {
     pid="$(cat "$pid_file" 2>/dev/null)" || return 1
     [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
+
+# ssh non-login shells often omit sbin, which is where lsmod/modprobe live.
+case ":$PATH:" in
+    *:/usr/sbin:*) ;;
+    *) PATH="$PATH:/usr/sbin:/sbin" ;;
+esac
+
+# True if a kernel module is loaded. Reads /proc/modules directly rather than
+# shelling out to lsmod, which is not always on PATH.
+module_loaded() {
+    grep -q "^$1 " /proc/modules 2>/dev/null
+}
+
+# True if the RTL-SDR (0bda:2838) is attached. Walks sysfs so this does not
+# depend on usbutils being installed.
+rtlsdr_present() {
+    local dev
+    for dev in /sys/bus/usb/devices/*; do
+        [[ -r "$dev/idVendor" && -r "$dev/idProduct" ]] || continue
+        if [[ "$(cat "$dev/idVendor")" == "0bda" && "$(cat "$dev/idProduct")" == "2838" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
