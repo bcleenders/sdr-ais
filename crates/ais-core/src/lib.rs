@@ -116,6 +116,7 @@ pub fn extract_position(
             course_deg: r.course,
             heading: None,
             nav_status: None,
+            ship_name: None,
             signal_level,
         }),
 
