@@ -141,17 +141,36 @@ The guest kernel is any uncompressed Firecracker `vmlinux` with `CONFIG_VIRTIO_V
 
 Kept separate from `vm-up.sh` because going public should be a deliberate act.
 
-## The custom domain problem
+## The public URL
 
-**`sdr-ais.alnitak.cxcc.nl` cannot be served by Tailscale Funnel.**
+The frontend talks to the node's own MagicDNS name:
 
-Funnel only serves names in your tailnet's own domain — here `alnitak.tail36e7a.ts.net` — and only on ports 443, 8443 and 10000. The TLS certificate Tailscale provisions covers that name and nothing else. A `CNAME` from `sdr-ais.alnitak.cxcc.nl` will resolve fine, but the certificate presented will not match the name the browser asked for, and the connection will be refused before any request is sent.
+```
+https://alnitak.tail36e7a.ts.net
+```
 
-Three options:
+**`sdr-ais.alnitak.cxcc.nl` is deliberately not used**, because Tailscale Funnel cannot serve it.
 
-1. **Use the `.ts.net` name.** Point the frontend at `https://alnitak.tail36e7a.ts.net`. Nothing to configure, valid certificate, home IP stays hidden. The cost is that the tailnet name becomes public.
-2. **Put Cloudflare in front.** Move `cxcc.nl` to Cloudflare, proxy `sdr-ais.alnitak.cxcc.nl` to origin `alnitak.tail36e7a.ts.net` with SSL mode *Full* (not Full Strict — the origin certificate deliberately will not match). Gives the custom domain plus WAF and rate limiting, at the cost of a DNS migration and a dependency.
-3. **Drop Funnel.** Run Caddy on the host with a Let's Encrypt certificate via DNS-01 against Openprovider, and forward port 443 on the router. Real custom domain, no third party — but it publishes your home IP address and opens an inbound port, which is a materially worse blast radius than Funnel's outbound-only tunnel.
+Funnel only serves names inside your tailnet's domain, and only on ports 443, 8443 and 10000. The certificate Tailscale provisions covers `alnitak.tail36e7a.ts.net` and nothing else. A `CNAME` from `sdr-ais.alnitak.cxcc.nl` would resolve, but the certificate presented would not match the name the browser asked for, so the connection would be refused before any request was sent. There is no Funnel setting that changes this.
+
+The accepted trade-off is that the tailnet name becomes public and there is no rate limiting in front of the service. If either becomes a problem, the fix is to put Cloudflare in front: move `cxcc.nl` to Cloudflare and proxy `sdr-ais.alnitak.cxcc.nl` to origin `alnitak.tail36e7a.ts.net` with SSL mode *Full* — not *Full (Strict)*, since the origin certificate deliberately will not match. That restores the custom domain and adds a WAF and rate limiting, at the cost of a DNS migration off Openprovider.
+
+Running Caddy on the host with a DNS-01 certificate and a forwarded port 443 would also work, but it publishes your home IP address and opens an inbound port, which is a materially worse blast radius than Funnel's outbound-only tunnel.
+
+### Funnel prerequisites
+
+Funnel needs two things enabled in the Tailscale admin console before `funnel-up.sh` will succeed:
+
+- **DNS** → MagicDNS and HTTPS Certificates both on.
+- **Access controls** → the `funnel` node attribute granted to this node:
+
+  ```json
+  "nodeAttrs": [
+    { "target": ["alnitak.tail36e7a.ts.net"], "attr": ["funnel"] }
+  ]
+  ```
+
+Note that enabling HTTPS certificates publishes the hostname to public Certificate Transparency logs. That is inherent to Let's Encrypt, not specific to Tailscale.
 
 ## API
 

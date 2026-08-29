@@ -25,7 +25,11 @@ command -v firecracker >/dev/null || die "firecracker not found in PATH"
 [[ -x "$HOST_BIN" ]] || die "host binary missing: $HOST_BIN — run scripts/build.sh"
 
 if lsmod 2>/dev/null | grep -q "^dvb_usb_rtl28xxu "; then
-    die "the DVB-T driver still holds the dongle — run: sudo ./scripts/setup-host.sh"
+    # Not fatal: rs-rtl issues USBDEVFS_DISCONNECT before claiming the
+    # interface, so it takes the dongle off the DVB driver by itself.
+    # The blacklist still matters, to stop it rebinding on replug.
+    warn "dvb_usb_rtl28xxu is loaded; the tap will detach it from the dongle"
+    warn "run: sudo ./scripts/setup-host.sh   (stops it rebinding on replug)"
 fi
 
 if lsusb 2>/dev/null | grep -q "0bda:2838"; then
