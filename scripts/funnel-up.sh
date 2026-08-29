@@ -27,8 +27,12 @@ log "Publishing 127.0.0.1:$LOCAL_HTTP_PORT as https://$NODE_DNS (port $FUNNEL_PO
 
 # Capture output so a failure can be diagnosed rather than guessed at. The two
 # realistic causes need completely different fixes.
-if ! output="$(tailscale funnel --bg --https="$FUNNEL_PORT" \
-        "http://127.0.0.1:$LOCAL_HTTP_PORT" 2>&1)"; then
+# Mount ONLY /ws. Anything else 404s at the Tailscale layer and never
+# reaches the microVM: /healthz and /v1/vessels stay loopback-only.
+# The target carries the /ws path because serve strips the mount prefix
+# before proxying, so a bare :8080 target would arrive as /.
+if ! output="$(tailscale funnel --bg --https="$FUNNEL_PORT" --set-path=/ws \
+        "http://127.0.0.1:$LOCAL_HTTP_PORT/ws" 2>&1)"; then
     printf '%s\n' "$output" >&2
     echo >&2
 
@@ -63,10 +67,12 @@ fi
 log "Public."
 cat <<EOF
 
-  public URL   https://$NODE_DNS
-    https://$NODE_DNS/healthz
-    https://$NODE_DNS/v1/vessels
-    wss://$NODE_DNS/ws
+  public   wss://$NODE_DNS/ws     <- the only thing exposed
+
+  Everything else 404s at the Tailscale layer and never reaches the VM.
+  These stay reachable on alnitak's loopback only, for debugging:
+    curl http://127.0.0.1:$LOCAL_HTTP_PORT/healthz
+    curl http://127.0.0.1:$LOCAL_HTTP_PORT/v1/vessels
 
   Point the frontend at that hostname. See README.md for why
   sdr-ais.alnitak.cxcc.nl cannot be served directly by Funnel.

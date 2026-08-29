@@ -178,13 +178,31 @@ Note that enabling HTTPS certificates publishes the hostname to public Certifica
 
 Read-only. No writes, no path parameters, no query parameters, no request bodies.
 
-| Endpoint | Returns |
-|---|---|
-| `GET /healthz` | `ok` |
-| `GET /v1/vessels` | JSON array — most recent position per vessel |
-| `GET /ws` | WebSocket; the current table, then a live message per decoded position |
+**Only `/ws` is exposed to the internet.** Funnel mounts a single handler at `/ws`; every other path is rejected by Tailscale with a 404 and never reaches the microVM. The other two endpoints exist for local debugging and for `vm-up.sh`'s readiness probe, and are reachable only on alnitak's loopback.
 
-`/ws` sends the same JSON objects your existing `index.html` already consumes, so the frontend needs no changes beyond pointing at the new host. It also replays the current vessel table on connect, so a fresh client renders immediately instead of waiting for each ship's next transmission.
+| Endpoint | Public | Returns |
+|---|---|---|
+| `GET /ws` | **yes** | WebSocket; the current vessel table, then one message per decoded position |
+| `GET /v1/vessels` | no — loopback only | JSON array, most recent position per vessel |
+| `GET /healthz` | no — loopback only | `ok` |
+
+```bash
+# public
+websocat wss://alnitak.tail36e7a.ts.net/ws
+
+# loopback only, on alnitak
+curl -s http://127.0.0.1:8080/v1/vessels | jq length
+```
+
+`/ws` sends the same JSON objects the bundled `index.html` already consumes, so a browser client needs only the URL changed:
+
+```js
+const ws = new WebSocket('wss://alnitak.tail36e7a.ts.net/ws');
+```
+
+It replays the current vessel table on connect, so a fresh client renders immediately instead of waiting for each ship's next transmission. That is why the frontend does not need `/v1/vessels`, and therefore why keeping that endpoint private costs nothing.
+
+A plain `GET /ws` without WebSocket upgrade headers returns 400. That is expected, and is a convenient way to check the tunnel is routing without opening a socket.
 
 ## Security notes
 
