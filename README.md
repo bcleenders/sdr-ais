@@ -166,9 +166,11 @@ Funnel needs two things enabled in the Tailscale admin console before `funnel-up
 
   ```json
   "nodeAttrs": [
-    { "target": ["alnitak.tail36e7a.ts.net"], "attr": ["funnel"] }
+    { "target": ["100.92.0.43"], "attr": ["funnel"] }
   ]
   ```
+
+  The `target` field accepts `*`, a user, a group, a tag, or a tailnet IP — **not** a MagicDNS name. Using `alnitak.tail36e7a.ts.net` there fails with `invalid address`. `100.92.0.43` scopes Funnel to this node alone; `bcleenders@github` would grant it to every device you own.
 
 Note that enabling HTTPS certificates publishes the hostname to public Certificate Transparency logs. That is inherent to Let's Encrypt, not specific to Tailscale.
 

@@ -20,6 +20,9 @@ if ! curl -fsS --max-time 2 "http://127.0.0.1:$LOCAL_HTTP_PORT/healthz" >/dev/nu
 fi
 
 NODE_DNS="$(tailscale status --json 2>/dev/null | sed -n 's/.*"DNSName": *"\([^"]*\)".*/\1/p' | head -1)"
+# nodeAttrs targets accept "*", a user, a group, a tag or a tailnet IP —
+# never a MagicDNS name, so the ACL hint below quotes the IP.
+NODE_IP="$(tailscale ip -4 2>/dev/null | head -1)"
 NODE_DNS="${NODE_DNS%.}"
 [[ -n "$NODE_DNS" ]] || die "could not determine this node's MagicDNS name (is tailscaled up?)"
 
@@ -33,7 +36,7 @@ Most likely one of the prerequisites is missing. In the Tailscale admin console:
   * Access controls -> grant this node the funnel attribute, e.g.
 
       \"nodeAttrs\": [
-        { \"target\": [\"$NODE_DNS\"], \"attr\": [\"funnel\"] }
+        { \"target\": [\"$NODE_IP\"], \"attr\": [\"funnel\"] }
       ]"
 fi
 
