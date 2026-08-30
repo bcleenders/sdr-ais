@@ -38,6 +38,11 @@ else
     warn "no RTL-SDR (0bda:2838) found on USB — the API will serve an empty vessel list"
 fi
 
+if [[ ",$ALLOWED_ORIGINS," == *",*,"* ]]; then
+    warn "ORIGIN CHECKING DISABLED — any website can read this stream in a browser"
+    warn "this is a development setting; restart without SDR_AIS_EXTRA_ORIGINS to restore it"
+fi
+
 if pid_alive "$FC_PID_FILE"; then
     die "a microVM is already running (pid $(cat "$FC_PID_FILE")) — run scripts/vm-down.sh first"
 fi

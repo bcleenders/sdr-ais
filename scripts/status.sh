@@ -72,6 +72,15 @@ if command -v tailscale >/dev/null; then
 fi
 
 echo
+echo "origin policy"
+if [[ -f "$RUN_DIR/vm-config.json" ]] && grep -q 'sdr\.origin=[^ ]*\*' "$RUN_DIR/vm-config.json"; then
+    bad "origin checking DISABLED — any website can read the stream"
+    bad "restart without SDR_AIS_EXTRA_ORIGINS to restore it"
+elif [[ -f "$RUN_DIR/vm-config.json" ]]; then
+    ok "$(sed -n 's/.*sdr\.origin=\([^ ]*\).*/\1/p' "$RUN_DIR/vm-config.json")"
+fi
+
+echo
 echo "logs  ($RUN_DIR, cleared on host reboot)"
 for spec in "guest console:$FC_LOG" "tap:$TAP_LOG" "proxy:$PROXY_LOG"; do
     name="${spec%%:*}"; file="${spec#*:}"

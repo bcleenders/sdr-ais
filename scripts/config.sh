@@ -59,6 +59,10 @@ ALLOWED_ORIGIN="${SDR_AIS_ALLOWED_ORIGIN:-https://amsterdam-vessel-map--bcleende
 # reading the feed in a browser, any non-browser client can send whatever
 # Origin it likes, and the data is public vessel positions. It is opt-in so
 # that production does not quietly carry a development origin.
+# Set to "*" to turn origin checking off entirely while developing:
+#     SDR_AIS_EXTRA_ORIGINS='*' ./scripts/vm-up.sh
+# vm-up.sh and status.sh both flag this loudly, because on a funnelled host it
+# lets any website read the stream from a visitor's browser.
 EXTRA_ORIGINS="${SDR_AIS_EXTRA_ORIGINS:-}"
 ALLOWED_ORIGINS="$ALLOWED_ORIGIN${EXTRA_ORIGINS:+,$EXTRA_ORIGINS}"
 

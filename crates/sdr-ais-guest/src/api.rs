@@ -37,6 +37,9 @@ pub struct AppState {
     vessels: Arc<Mutex<VesselTable>>,
     ws_clients: Arc<AtomicUsize>,
     allowed_origins: Arc<Vec<String>>,
+    /// Set when the allowlist is literally `*`. Development escape hatch: any
+    /// origin may read the stream. See `SDR_AIS_EXTRA_ORIGINS` in config.sh.
+    allow_any_origin: bool,
 }
 
 impl AppState {
@@ -51,11 +54,16 @@ impl AppState {
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect();
+        let allow_any_origin = origins.iter().any(|o| o == "*");
+        if allow_any_origin {
+            eprintln!("guest: WARNING origin checking disabled, any site may read the stream");
+        }
         let state = Self {
             tx: tx.clone(),
             vessels: Arc::new(Mutex::new(VesselTable::new())),
             ws_clients: Arc::new(AtomicUsize::new(0)),
             allowed_origins: Arc::new(origins),
+            allow_any_origin,
         };
         (state, tx)
     }
@@ -79,12 +87,18 @@ pub fn router(state: AppState) -> Router {
     // browser-side control, not authentication: it stops other origins from
     // embedding the feed, but any non-browser client can send whatever Origin
     // it likes. The data is public vessel positions, so that is acceptable.
-    let origin_values: Vec<HeaderValue> = allowed
-        .iter()
-        .filter_map(|o| HeaderValue::from_str(o).ok())
-        .collect();
+    let origin_rule = if state.allow_any_origin {
+        AllowOrigin::any()
+    } else {
+        AllowOrigin::list(
+            allowed
+                .iter()
+                .filter_map(|o| HeaderValue::from_str(o).ok())
+                .collect::<Vec<_>>(),
+        )
+    };
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(origin_values))
+        .allow_origin(origin_rule)
         .allow_methods([Method::GET])
         .max_age(Duration::from_secs(600));
 
@@ -144,6 +158,7 @@ async fn ws_handler(
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
 
     match origin {
+        _ if state.allow_any_origin => {}
         Some(o) if state.allowed_origins.iter().any(|a| a == o) => {}
         // Absent Origin means a non-browser client. Allowed: the feed is public
         // and this keeps `websocat`/curl debugging workable.
