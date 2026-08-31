@@ -3,3 +3,6 @@
 # Guest kernel and root filesystem, built by scripts/build.sh.
 # Large binary artifacts; reproducible from source.
 /vm/
+
+# Per-host overrides, created by scripts/config.sh users. Not tracked.
+/scripts/local.env

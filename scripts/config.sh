@@ -5,6 +5,14 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Per-host overrides, not tracked in git. Use conditional assignment inside it
+# (`: "${VAR:=value}"`) so a variable set on the command line still wins.
+# This is how a setting survives a restart — anything passed inline is lost the
+# next time someone runs vm-up.sh without it.
+if [[ -f "$REPO_ROOT/scripts/local.env" ]]; then
+    source "$REPO_ROOT/scripts/local.env"
+fi
+
 # --- Runtime state -----------------------------------------------------------
 # Sockets and PID files live on a tmpfs owned by us, mode 0700. Nothing here
 # survives a reboot, which is what we want.
