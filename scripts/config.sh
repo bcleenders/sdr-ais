@@ -26,15 +26,19 @@ VSOCK_UDS="$RUN_DIR/vsock.sock"
 FC_PID_FILE="$RUN_DIR/firecracker.pid"
 TAP_PID_FILE="$RUN_DIR/tap.pid"
 PROXY_PID_FILE="$RUN_DIR/proxy.pid"
+LOGGER_PID_FILE="$RUN_DIR/logger.pid"
 FC_LOG="$RUN_DIR/firecracker.log"
 TAP_LOG="$RUN_DIR/tap.log"
 PROXY_LOG="$RUN_DIR/proxy.log"
+LOGGER_LOG="$RUN_DIR/logger.log"
 
 # --- vsock ports -------------------------------------------------------------
 # Guest dials out to the host on this port to receive raw I/Q.
 IQ_PORT="${SDR_AIS_IQ_PORT:-5000}"
 # Guest listens on this port for HTTP.
 GUEST_HTTP_PORT="${SDR_AIS_GUEST_HTTP_PORT:-8000}"
+# Guest listens on this port for the position log stream.
+LOG_PORT="${SDR_AIS_LOG_PORT:-5001}"
 # Loopback port the proxy exposes, and what Tailscale Funnel forwards to.
 LOCAL_HTTP_PORT="${SDR_AIS_LOCAL_HTTP_PORT:-8080}"
 
@@ -80,6 +84,11 @@ UI_PORT="${SDR_AIS_UI_PORT:-8000}"
 
 # Funnel can only listen on 443, 8443 or 10000.
 FUNNEL_PORT="${SDR_AIS_FUNNEL_PORT:-443}"
+
+# --- Radio -------------------------------------------------------------------
+# --- Position log ------------------------------------------------------------
+DB_PATH="${SDR_AIS_DB:-$REPO_ROOT/positions.db}"
+EXCLUDE_MMSI_FILE="${SDR_AIS_EXCLUDE_MMSI:-$REPO_ROOT/excluded_mmsi.txt}"
 
 # --- Radio -------------------------------------------------------------------
 SDR_DEVICE="${SDR_AIS_DEVICE:-0}"

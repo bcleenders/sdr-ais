@@ -34,8 +34,8 @@ stop() {
     rm -f "$pid_file"
 }
 
-# Proxy first so no new requests reach a VM that is going away, then the VM,
-# then release the dongle.
+# Logger first (it reads from the VM), then proxy, then VM, then dongle.
+stop "logger"      "$LOGGER_PID_FILE"
 stop "proxy"       "$PROXY_PID_FILE"
 stop "microVM"     "$FC_PID_FILE"
 stop "I/Q tap"     "$TAP_PID_FILE"

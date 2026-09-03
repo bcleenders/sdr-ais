@@ -12,6 +12,7 @@ mod api;
 mod boot;
 mod listener;
 
+use std::collections::HashSet;
 use std::os::fd::OwnedFd;
 use std::time::Duration;
 
@@ -19,8 +20,9 @@ use ais_core::{AIS_SAMPLE_RATE, OutlierFilter, extract_position};
 use desperado::IqFormat;
 use futures::StreamExt;
 use rs162::sources::AisAsyncIqSource;
-use tokio::io::AsyncWriteExt;
-use tokio_vsock::{VsockAddr, VsockStream};
+use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::broadcast;
+use tokio_vsock::{VsockAddr, VsockListener, VsockStream};
 
 use crate::listener::VsockAxumListener;
 
@@ -30,6 +32,7 @@ const VMADDR_CID_ANY: u32 = 0xFFFF_FFFF;
 
 const DEFAULT_IQ_PORT: u32 = 5000;
 const DEFAULT_HTTP_PORT: u32 = 8000;
+const DEFAULT_LOG_PORT: u32 = 5001;
 
 fn main() {
     // PID 1 has to bring up its own environment; there is no init system.
@@ -43,6 +46,15 @@ fn main() {
     let http_port = boot::kernel_param("sdr.http_port")
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_HTTP_PORT);
+    let log_port = boot::kernel_param("sdr.log_port")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_LOG_PORT);
+    let excluded_mmsi: HashSet<u32> = boot::kernel_param("sdr.exclude_mmsi")
+        .map(|s| s.split(',').filter_map(|v| v.parse().ok()).collect())
+        .unwrap_or_default();
+    if !excluded_mmsi.is_empty() {
+        eprintln!("guest: excluding {} MMSIs from live stream", excluded_mmsi.len());
+    }
 
     let pipe_tx = boot::redirect_stdin_from_pipe().expect("failed to rewire stdin");
 
@@ -56,9 +68,11 @@ fn main() {
 
     runtime.block_on(async move {
         let (state, _tx) = api::AppState::new(allowed_origins.clone());
+        let (log_tx, _) = broadcast::channel::<String>(512);
 
         tokio::spawn(feed_iq_from_host(iq_port, pipe_tx));
-        tokio::spawn(decode_loop(state.clone()));
+        tokio::spawn(decode_loop(state.clone(), log_tx.clone(), excluded_mmsi));
+        tokio::spawn(serve_position_log(log_port, log_tx));
 
         eprintln!("guest: serving API on vsock port {http_port}, origins {allowed_origins}");
 
@@ -119,7 +133,11 @@ async fn feed_iq_from_host(port: u32, pipe_fd: OwnedFd) {
 }
 
 /// Demodulate and decode whatever arrives on stdin, publishing valid positions.
-async fn decode_loop(state: api::AppState) {
+async fn decode_loop(
+    state: api::AppState,
+    log_tx: broadcast::Sender<String>,
+    excluded_mmsi: HashSet<u32>,
+) {
     let mut source = AisAsyncIqSource::from_stdin(AIS_SAMPLE_RATE, IqFormat::Cu8);
     let mut filter = OutlierFilter::new();
 
@@ -145,10 +163,64 @@ async fn decode_loop(state: api::AppState) {
             continue;
         };
 
+        if let Ok(json) = serde_json::to_string(&pos) {
+            let _ = log_tx.send(json);
+        }
+
+        if excluded_mmsi.contains(&pos.mmsi) {
+            continue;
+        }
+
         if filter.is_valid(&pos) {
             state.publish(pos);
         }
     }
 
     eprintln!("guest: decode loop ended");
+}
+
+/// Stream all decoded positions to a host-side logger over vsock.
+async fn serve_position_log(port: u32, log_tx: broadcast::Sender<String>) {
+    let listener = match VsockListener::bind(VsockAddr::new(VMADDR_CID_ANY, port)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("guest: failed to bind log port {port}: {e}");
+            return;
+        }
+    };
+    eprintln!("guest: position log stream on vsock port {port}");
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, _addr)) => {
+                let rx = log_tx.subscribe();
+                tokio::spawn(stream_positions(stream, rx));
+            }
+            Err(e) => {
+                eprintln!("guest: log accept error: {e}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    }
+}
+
+async fn stream_positions(stream: VsockStream, mut rx: broadcast::Receiver<String>) {
+    let mut writer = BufWriter::new(stream);
+    loop {
+        match rx.recv().await {
+            Ok(json) => {
+                if writer.write_all(json.as_bytes()).await.is_err() {
+                    break;
+                }
+                if writer.write_all(b"\n").await.is_err() {
+                    break;
+                }
+                if writer.flush().await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
 }

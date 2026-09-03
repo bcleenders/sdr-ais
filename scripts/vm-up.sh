@@ -2,11 +2,12 @@
 #
 # Start the sandboxed AIS API. Needs no privileges.
 #
-# Brings up three processes, in this order:
+# Brings up four processes, in this order:
 #
 #   1. tap         owns the RTL-SDR, waits on ${VSOCK_UDS}_${IQ_PORT}
 #   2. firecracker boots the microVM; the guest dials out for I/Q
 #   3. proxy       exposes the guest's HTTP on 127.0.0.1:${LOCAL_HTTP_PORT}
+#   4. logger      records all positions from the guest into SQLite
 #
 # The tap must be listening before the VM boots, otherwise the guest's first
 # I/Q connection attempt fails (it retries, but starting in order is tidier).
@@ -47,6 +48,15 @@ if pid_alive "$FC_PID_FILE"; then
     die "a microVM is already running (pid $(cat "$FC_PID_FILE")) — run scripts/vm-down.sh first"
 fi
 
+# Build the comma-separated MMSI exclusion list from the file, if present.
+EXCLUDE_MMSI=""
+if [[ -f "$EXCLUDE_MMSI_FILE" ]]; then
+    EXCLUDE_MMSI=$(sed 's/#.*//' "$EXCLUDE_MMSI_FILE" | tr -s ' \n' ',' | sed 's/^,//;s/,$//')
+    if [[ -n "$EXCLUDE_MMSI" ]]; then
+        log "Excluding $(echo "$EXCLUDE_MMSI" | tr ',' '\n' | wc -l | tr -d ' ') MMSIs from live stream"
+    fi
+fi
+
 mkdir -p "$RUN_DIR"
 chmod 700 "$RUN_DIR"
 rm -f "$VSOCK_UDS" "${VSOCK_UDS}_${IQ_PORT}"
@@ -82,7 +92,7 @@ cat > "$CONFIG_JSON" <<EOF
 {
   "boot-source": {
     "kernel_image_path": "$KERNEL",
-    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd init=/init sdr.origin=$ALLOWED_ORIGINS sdr.iq_port=$IQ_PORT sdr.http_port=$GUEST_HTTP_PORT"
+    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd init=/init sdr.origin=$ALLOWED_ORIGINS sdr.iq_port=$IQ_PORT sdr.http_port=$GUEST_HTTP_PORT sdr.log_port=$LOG_PORT${EXCLUDE_MMSI:+ sdr.exclude_mmsi=$EXCLUDE_MMSI}"
   },
   "drives": [
     {
@@ -145,6 +155,14 @@ if [[ $ready -ne 1 ]]; then
     die "startup failed (run scripts/vm-down.sh to clean up)"
 fi
 
+# --- 4. Position logger ------------------------------------------------------
+log "Starting position logger (-> $DB_PATH)"
+"$HOST_BIN" log \
+    --uds-path "$VSOCK_UDS" \
+    --guest-port "$LOG_PORT" \
+    --db "$DB_PATH" >"$LOGGER_LOG" 2>&1 &
+echo $! > "$LOGGER_PID_FILE"
+
 log "Up."
 cat <<EOF
 
@@ -154,7 +172,8 @@ cat <<EOF
     /ws              live position stream (WebSocket)
 
   allowed origins $ALLOWED_ORIGINS
-  logs           $RUN_DIR/{firecracker,tap,proxy}.log
+  position log   $DB_PATH
+  logs           $RUN_DIR/{firecracker,tap,proxy,logger}.log
 
   expose publicly  ./scripts/funnel-up.sh
   tear down        ./scripts/vm-down.sh

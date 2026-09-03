@@ -11,6 +11,7 @@
 //! Neither parses anything. All interpretation of radio data and of internet
 //! requests happens inside the microVM.
 
+mod log;
 mod proxy;
 mod tap;
 
@@ -50,6 +51,21 @@ enum Command {
         bias_tee: bool,
     },
 
+    /// Log all decoded positions from the guest to a SQLite database.
+    Log {
+        /// Firecracker vsock UDS path (the base path, no port suffix).
+        #[arg(long)]
+        uds_path: String,
+
+        /// Guest vsock port the position log stream listens on.
+        #[arg(long, default_value_t = 5001)]
+        guest_port: u32,
+
+        /// Path to the SQLite database file.
+        #[arg(long, default_value = "positions.db")]
+        db: String,
+    },
+
     /// Bridge loopback TCP to the guest's vsock HTTP listener.
     Proxy {
         /// Firecracker vsock UDS path (the base path, no port suffix).
@@ -72,6 +88,17 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
+        Command::Log {
+            uds_path,
+            guest_port,
+            db,
+        } => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(log::run(&uds_path, guest_port, &db))
+        }
+
         Command::Tap {
             uds_path,
             port,

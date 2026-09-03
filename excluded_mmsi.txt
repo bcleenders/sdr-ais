@@ -1,0 +1,31 @@
+# Royal Netherlands Navy — excluded from the live stream.
+# Positions are still logged to the database.
+#
+# De Zeven Provinciën-class frigates
+244911000  # De Zeven Provinciën (F802)
+244899000  # Tromp (F803)
+244896000  # De Ruyter (F804)
+244942000  # Evertsen (F805)
+# Karel Doorman-class frigates
+245962000  # Van Speijk (F828)
+245965000  # Van Amstel (F831)
+# Holland-class patrol vessels
+244522000  # Holland (P840)
+245288000  # Zeeland (P841)
+245838000  # Friesland (P842)
+245846000  # Groningen (P843)
+# Amphibious / support
+244159000  # Rotterdam (L800)
+244527000  # Johan de Witt (L801)
+244173000  # Karel Doorman (A833)
+245974000  # Mercuur (A900)
+# Hydrographic / auxiliary
+245690000  # Snellius (A802)
+245939000  # Luymes (A803)
+244362000  # Pelikaan (A804)
+245989000  # Nautilus (A853)
+# Minehunters
+244251000  # Schiedam (M860)
+244591000  # Zierikzee (M862)
+# Generic identifiers
+246700000  # NETHERLANDS WARSHIP

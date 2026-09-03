@@ -8,14 +8,14 @@ use std::collections::{HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
 use rs162::decode::ais::Message;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Sample rate the host captures at. 288 kHz is the only rate in the RTL-SDR's
 /// low window that divides exactly to the demodulator's 96 kHz, so the sample
 /// rate adapter does no upsampling.
 pub const AIS_SAMPLE_RATE: u32 = 288_000;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PositionData {
     pub timestamp: String,
     pub channel: char,

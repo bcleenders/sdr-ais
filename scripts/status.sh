@@ -13,7 +13,7 @@ ok()   { printf '  \033[32m*\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[31mx\033[0m %s\n' "$*"; }
 
 echo "processes"
-for spec in "I/Q tap:$TAP_PID_FILE" "microVM:$FC_PID_FILE" "proxy:$PROXY_PID_FILE"; do
+for spec in "I/Q tap:$TAP_PID_FILE" "microVM:$FC_PID_FILE" "proxy:$PROXY_PID_FILE" "logger:$LOGGER_PID_FILE"; do
     name="${spec%%:*}"; file="${spec#*:}"
     if pid_alive "$file"; then ok "$name (pid $(cat "$file"))"; else bad "$name not running"; fi
 done
@@ -82,7 +82,7 @@ fi
 
 echo
 echo "logs  ($RUN_DIR, cleared on host reboot)"
-for spec in "guest console:$FC_LOG" "tap:$TAP_LOG" "proxy:$PROXY_LOG"; do
+for spec in "guest console:$FC_LOG" "tap:$TAP_LOG" "proxy:$PROXY_LOG" "logger:$LOGGER_LOG"; do
     name="${spec%%:*}"; file="${spec#*:}"
     printf '  %-14s %s\n' "$name" "$file"
 done
