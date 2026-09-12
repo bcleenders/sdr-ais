@@ -3,10 +3,118 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SDR AIS</title>
+    <title>AIS Ship Tracker — Amsterdam</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; font-family: system-ui, sans-serif; }
+        #map { height: 100%; width: 100%; }
+        #status {
+            position: absolute; top: 12px; right: 12px; z-index: 1000;
+            background: #fff; padding: 8px 14px; border-radius: 6px;
+            box-shadow: 0 1px 5px rgba(0,0,0,.3); font-size: 13px;
+            line-height: 1.6;
+        }
+        #status .dot {
+            display: inline-block; width: 8px; height: 8px;
+            border-radius: 50%; margin-right: 6px; vertical-align: middle;
+        }
+        #status .dot.connected { background: #2d8a4e; }
+        #status .dot.disconnected { background: #cf222e; }
+        #status .dot.connecting { background: #bf8700; }
+    </style>
 </head>
 <body>
-    <h1>SDR AIS</h1>
-    <p>Hello, world!</p>
+    <div id="map"></div>
+    <div id="status">
+        <span class="dot connecting" id="dot"></span>
+        <span id="conn-text">Connecting…</span><br>
+        <span id="vessel-count">0 vessels</span>
+    </div>
+    <script>
+        const WS_URL = "wss://alnitak.tail36e7a.ts.net/ws";
+
+        const map = L.map("map").setView([52.38, 4.9], 12);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        const vessels = {};
+        const dot = document.getElementById("dot");
+        const connText = document.getElementById("conn-text");
+        const vesselCount = document.getElementById("vessel-count");
+
+        function shipIcon(heading) {
+            const rot = heading != null ? heading : 0;
+            return L.divIcon({
+                className: "",
+                iconSize: [16, 16],
+                iconAnchor: [8, 8],
+                html: `<svg width="16" height="16" viewBox="0 0 16 16" style="transform:rotate(${rot}deg)">
+                    <polygon points="8,1 13,14 8,11 3,14" fill="#1a5fb4" stroke="#fff" stroke-width="0.8"/>
+                </svg>`
+            });
+        }
+
+        function formatPopup(p) {
+            let html = `<b>MMSI ${p.mmsi}</b>`;
+            if (p.ship_name) html += `<br>${p.ship_name}`;
+            if (p.lat != null) html += `<br>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+            if (p.speed_kn != null) html += `<br>${p.speed_kn.toFixed(1)} kn`;
+            if (p.course_deg != null) html += ` / ${p.course_deg.toFixed(0)}&deg;`;
+            if (p.nav_status) html += `<br>${p.nav_status}`;
+            html += `<br><span style="color:#666;font-size:11px">${p.timestamp} UTC</span>`;
+            return html;
+        }
+
+        function updateVessel(p) {
+            if (p.lat == null || p.lon == null) return;
+
+            const key = p.mmsi;
+            if (vessels[key]) {
+                vessels[key].setLatLng([p.lat, p.lon]);
+                vessels[key].setIcon(shipIcon(p.heading));
+                vessels[key].setPopupContent(formatPopup(p));
+            } else {
+                const marker = L.marker([p.lat, p.lon], { icon: shipIcon(p.heading) })
+                    .bindPopup(formatPopup(p))
+                    .addTo(map);
+                vessels[key] = marker;
+            }
+            vesselCount.textContent = `${Object.keys(vessels).length} vessels`;
+        }
+
+        function setStatus(state, text) {
+            dot.className = `dot ${state}`;
+            connText.textContent = text;
+        }
+
+        function connect() {
+            setStatus("connecting", "Connecting…");
+            const ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => setStatus("connected", "Connected");
+
+            ws.onmessage = (e) => {
+                try { updateVessel(JSON.parse(e.data)); }
+                catch (_) {}
+            };
+
+            ws.onclose = () => {
+                setStatus("disconnected", "Disconnected — retrying…");
+                setTimeout(connect, 3000);
+            };
+
+            ws.onerror = () => ws.close();
+        }
+
+        connect();
+    </script>
 </body>
 </html>
