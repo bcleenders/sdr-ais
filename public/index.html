@@ -45,7 +45,10 @@
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         }).addTo(map);
 
+        const STALE_MS = 3 * 60 * 60 * 1000;
+
         const vessels = {};
+        const lastSeen = {};
         const dot = document.getElementById("dot");
         const connText = document.getElementById("conn-text");
         const vesselCount = document.getElementById("vessel-count");
@@ -73,10 +76,19 @@
             return html;
         }
 
+        function parseTimestamp(ts) {
+            return new Date(ts.replace(" ", "T") + "Z").getTime();
+        }
+
         function updateVessel(p) {
             if (p.lat == null || p.lon == null) return;
 
+            const posTime = parseTimestamp(p.timestamp);
+            if (Date.now() - posTime > STALE_MS) return;
+
             const key = p.mmsi;
+            lastSeen[key] = posTime;
+
             if (vessels[key]) {
                 vessels[key].setLatLng([p.lat, p.lon]);
                 vessels[key].setIcon(shipIcon(p.heading));
@@ -89,6 +101,20 @@
             }
             vesselCount.textContent = `${Object.keys(vessels).length} vessels`;
         }
+
+        function pruneStale() {
+            const cutoff = Date.now() - STALE_MS;
+            for (const key in lastSeen) {
+                if (lastSeen[key] < cutoff) {
+                    map.removeLayer(vessels[key]);
+                    delete vessels[key];
+                    delete lastSeen[key];
+                }
+            }
+            vesselCount.textContent = `${Object.keys(vessels).length} vessels`;
+        }
+
+        setInterval(pruneStale, 60_000);
 
         function setStatus(state, text) {
             dot.className = `dot ${state}`;
