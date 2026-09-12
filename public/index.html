@@ -59,13 +59,12 @@
         const vesselCount = document.getElementById("vessel-count");
 
         function shipIcon(heading, color) {
-            const rot = heading != null ? heading : 0;
             return L.divIcon({
                 className: "",
-                iconSize: [16, 16],
-                iconAnchor: [8, 8],
-                html: `<svg width="16" height="16" viewBox="0 0 16 16" style="transform:rotate(${rot}deg)">
-                    <polygon points="8,1 13,14 8,11 3,14" fill="${color}" stroke="#fff" stroke-width="0.8"/>
+                iconSize: [10, 10],
+                iconAnchor: [5, 5],
+                html: `<svg width="10" height="10" viewBox="0 0 10 10">
+                    <circle cx="5" cy="5" r="4" fill="${color}" stroke="#fff" stroke-width="1"/>
                 </svg>`
             });
         }
