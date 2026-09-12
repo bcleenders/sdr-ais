@@ -46,21 +46,25 @@
         }).addTo(map);
 
         const STALE_MS = 3 * 60 * 60 * 1000;
+        const ACTIVE_MS = 5 * 60 * 1000;
+        const COLOR_ACTIVE = "#2d8a4e";
+        const COLOR_IDLE = "#8b949e";
 
         const vessels = {};
         const lastSeen = {};
+        const headings = {};
         const dot = document.getElementById("dot");
         const connText = document.getElementById("conn-text");
         const vesselCount = document.getElementById("vessel-count");
 
-        function shipIcon(heading) {
+        function shipIcon(heading, color) {
             const rot = heading != null ? heading : 0;
             return L.divIcon({
                 className: "",
                 iconSize: [16, 16],
                 iconAnchor: [8, 8],
                 html: `<svg width="16" height="16" viewBox="0 0 16 16" style="transform:rotate(${rot}deg)">
-                    <polygon points="8,1 13,14 8,11 3,14" fill="#1a5fb4" stroke="#fff" stroke-width="0.8"/>
+                    <polygon points="8,1 13,14 8,11 3,14" fill="${color}" stroke="#fff" stroke-width="0.8"/>
                 </svg>`
             });
         }
@@ -88,13 +92,14 @@
 
             const key = p.mmsi;
             lastSeen[key] = posTime;
+            headings[key] = p.heading;
 
             if (vessels[key]) {
                 vessels[key].setLatLng([p.lat, p.lon]);
-                vessels[key].setIcon(shipIcon(p.heading));
+                vessels[key].setIcon(shipIcon(p.heading, COLOR_ACTIVE));
                 vessels[key].setPopupContent(formatPopup(p));
             } else {
-                const marker = L.marker([p.lat, p.lon], { icon: shipIcon(p.heading) })
+                const marker = L.marker([p.lat, p.lon], { icon: shipIcon(p.heading, COLOR_ACTIVE) })
                     .bindPopup(formatPopup(p))
                     .addTo(map);
                 vessels[key] = marker;
@@ -102,19 +107,24 @@
             vesselCount.textContent = `${Object.keys(vessels).length} vessels`;
         }
 
-        function pruneStale() {
-            const cutoff = Date.now() - STALE_MS;
+        function refreshColors() {
+            const now = Date.now();
+            const staleCutoff = now - STALE_MS;
+            const activeCutoff = now - ACTIVE_MS;
             for (const key in lastSeen) {
-                if (lastSeen[key] < cutoff) {
+                if (lastSeen[key] < staleCutoff) {
                     map.removeLayer(vessels[key]);
                     delete vessels[key];
                     delete lastSeen[key];
+                    delete headings[key];
+                } else if (lastSeen[key] < activeCutoff) {
+                    vessels[key].setIcon(shipIcon(headings[key], COLOR_IDLE));
                 }
             }
             vesselCount.textContent = `${Object.keys(vessels).length} vessels`;
         }
 
-        setInterval(pruneStale, 60_000);
+        setInterval(refreshColors, 30_000);
 
         function setStatus(state, text) {
             dot.className = `dot ${state}`;
