@@ -1,5 +1,7 @@
 # sdr-ais
 
+**Live map:** <https://sdr-ais.cxcc.nl/>
+
 Receives [AIS](https://en.wikipedia.org/wiki/Automatic_identification_system) vessel position broadcasts on 161.975 / 162.025 MHz with an RTL-SDR and serves them as a live JSON feed.
 
 There are two ways to run it.
